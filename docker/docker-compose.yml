@@ -1,0 +1,216 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:v3.0
+    container_name: creatoros-traefik
+    command:
+      - "--providers.docker=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@${DOMAIN}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-data:/letsencrypt"
+    networks:
+      - creatoros
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: creatoros-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-creatoros}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?required}
+      POSTGRES_DB: ${DB_NAME:-creatoros}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - creatoros
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-creatoros}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: creatoros-pgbouncer
+    environment:
+      DB_USER: ${DB_USER:-creatoros}
+      DB_PASSWORD: ${DB_PASSWORD:?required}
+      DB_HOST: postgres
+      DB_NAME: ${DB_NAME:-creatoros}
+      PGBOUNCER_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 100
+    ports:
+      - "5432:5432"
+    networks:
+      - creatoros
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: creatoros-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?required}
+    volumes:
+      - redis-data:/data
+    networks:
+      - creatoros
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: creatoros-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-creatoros}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?required}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - creatoros
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/creatoros/api:latest
+    container_name: creatoros-api
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@pgbouncer:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-creatoros}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?required}
+      CORS_ORIGIN: https://${DOMAIN}
+      LOG_LEVEL: info
+    networks:
+      - creatoros
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`api.${DOMAIN}`)"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/creatoros/web:latest
+    container_name: creatoros-web
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://api.${DOMAIN}
+      API_URL: http://api:3001
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    networks:
+      - creatoros
+    depends_on:
+      - api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
+    restart: unless-stopped
+
+  ai-worker:
+    image: ghcr.io/creatoros/ai-worker:latest
+    container_name: creatoros-ai-worker
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ai-worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@pgbouncer:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
+    networks:
+      - creatoros
+    depends_on:
+      - redis
+      - pgbouncer
+    restart: unless-stopped
+
+  analytics-worker:
+    image: ghcr.io/creatoros/analytics-worker:latest
+    container_name: creatoros-analytics-worker
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.analytics-worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@pgbouncer:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-credentials
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
+    secrets:
+      - google-credentials
+    networks:
+      - creatoros
+    depends_on:
+      - redis
+      - pgbouncer
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: creatoros-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - creatoros
+    ports:
+      - "11434:11434"
+    profiles:
+      - local-ai # Only start when using local models
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  ollama-data:
+  traefik-data:
+
+networks:
+  creatoros:
+    driver: bridge
+
+secrets:
+  google-credentials:
+    file: ./secrets/google-credentials.json

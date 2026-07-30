@@ -1,0 +1,38 @@
+{
+  "name": "creatoros",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source, self-hostable YouTube growth toolkit. Privacy-first alternative to TubeBuddy/vidIQ.",
+  "repository": "https://github.com/creatoros/creatoros",
+  "license": "AGPL-3.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "db:generate": "pnpm --filter @creatoros/database db:generate",
+    "db:push": "pnpm --filter @creatoros/database db:push",
+    "db:migrate": "pnpm --filter @creatoros/database db:migrate",
+    "db:studio": "pnpm --filter @creatoros/database db:studio",
+    "docker:build": "docker compose -f docker/docker-compose.yml build",
+    "docker:up": "docker compose -f docker/docker-compose.yml up -d",
+    "changeset": "changeset",
+    "ci:release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "prettier": "^3.2.0",
+    "prettier-plugin-tailwindcss": "^0.5.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0"
+  },
+  "packageManager": "pnpm@9.1.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

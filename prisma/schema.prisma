@@ -1,0 +1,747 @@
+// ─────────────────────────────────────────────────────────
+// CreatorOS — Canonical Prisma Schema v0.1
+// ─────────────────────────────────────────────────────────
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  extensions = [pgcrypto, uuid_ossp]
+}
+
+// ─── ENUMS ───────────────────────────────────────────────
+
+enum ChannelStatus {
+  ACTIVE
+  DISCONNECTED
+  ERROR
+  PENDING_REFRESH
+}
+
+enum VideoStatus {
+  PUBLIC
+  PRIVATE
+  UNLISTED
+  SCHEDULED
+  DELETED
+  DRAFT
+}
+
+enum SyncStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum AITaskType {
+  TITLE_GENERATION
+  DESCRIPTION_OPTIMIZATION
+  SCRIPT_WRITING
+  THUMBNAIL_ANALYSIS
+  KEYWORD_RESEARCH
+  TAG_GENERATION
+  COMPETITOR_ANALYSIS
+  TREND_FORECASTING
+  COMMENT_ANALYSIS
+  ANALYTICS_EXPLANATION
+}
+
+enum AITaskStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AIProvider {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  OLLAMA
+  CUSTOM
+}
+
+enum SubscriptionTier {
+  SELF_HOSTED
+  ENTERPRISE
+}
+
+enum NotificationChannel {
+  EMAIL
+  DISCORD
+  SLACK
+  WEBHOOK
+  IN_APP
+}
+
+enum PluginStatus {
+  ACTIVE
+  DISABLED
+  ERROR
+}
+
+// ─── USER & AUTH ─────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  passwordHash  String?
+  name          String?
+  avatarUrl     String?
+  oauthProvider String?   // "google" | "github"
+  oauthId       String?
+  role          String    @default("user") // user | admin
+  tier          SubscriptionTier @default(SELF_HOSTED)
+
+  // Settings & Preferences
+  locale        String    @default("en")
+  timezone      String    @default("UTC")
+  theme         String    @default("system") // light | dark | system
+  onboardingComplete Boolean @default(false)
+
+  // Plugin registry (this user's installed plugins)
+  plugins       PluginRegistration[]
+  pluginConfigs PluginConfig[]
+
+  // Relations
+  channels      Channel[]
+  sessions      Session[]
+  apiKeys       ApiKey[]
+  reports       Report[]
+  notifications Notification[]
+  aiTasks       AITask[]
+  contentCalendar  ContentCalendarItem[]
+  webhooks      Webhook[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@map("sessions")
+}
+
+model ApiKey {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  key       String   @unique
+  scopes    String[] // ["read:analytics", "write:videos", etc.]
+  lastUsed  DateTime?
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([key])
+  @@map("api_keys")
+}
+
+// ─── CHANNELS & YOUTUBE INTEGRATION ─────────────────────
+
+model Channel {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String        @db.Uuid
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // YouTube Channel Data
+  youtubeId     String        @unique
+  title         String
+  description   String?
+  thumbnailUrl  String?
+  customUrl     String?
+  publishedAt   DateTime?
+  country       String?
+  defaultLanguage String?
+
+  // OAuth Tokens (encrypted at rest)
+  accessToken   String?
+  refreshToken  String?
+  tokenExpiresAt DateTime?
+
+  // Sync Status
+  status        ChannelStatus @default(ACTIVE)
+  lastSyncedAt  DateTime?
+  syncStatus    SyncStatus    @default(PENDING)
+  syncError     String?
+
+  // Channel Metrics Snapshot
+  subscriberCount   Int       @default(0)
+  videoCount        Int       @default(0)
+  viewCount         BigInt    @default(0)
+
+  // Relations
+  videos        Video[]
+  analyticsSnapshots ChannelAnalyticsSnapshot[]
+  competitorOf  CompetitorAnalysis[]
+  keywords      Keyword[]
+  playlists     Playlist[]
+  comments      Comment[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([youtubeId])
+  @@map("channels")
+}
+
+// ─── VIDEOS ──────────────────────────────────────────────
+
+model Video {
+  id            String      @id @default(uuid()) @db.Uuid
+  channelId     String      @db.Uuid
+  channel       Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  // YouTube Video Data
+  youtubeId     String      @unique
+  title         String
+  description   String?
+  thumbnailUrl  String?
+  tags          String[]    @default([])
+  categoryId    String?
+  defaultLanguage String?
+  duration      Int?        // seconds
+  status        VideoStatus @default(PUBLIC)
+
+  // Publishing
+  publishedAt   DateTime?
+  scheduledAt   DateTime?
+
+  // Creator's notes
+  notes         String?
+  productionStage String?   // idea | script | recording | editing | thumbnail | published
+
+  // Generated / AI content
+  generatedTitles    String[]  @default([])
+  generatedTags      String[]  @default([])
+  seoScore           Int?
+  opportunityScore   Float?
+  thumbnailAnalysis  Json?     // { contrast, gazeHeatmap, textOverlay, score }
+
+  // Local thumbnail (for analysis before upload)
+  localThumbnailPath String?
+
+  // Relations
+  analytics     VideoAnalytics[]
+  keywords      VideoKeyword[]
+  comments      Comment[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([channelId])
+  @@index([youtubeId])
+  @@index([publishedAt])
+  @@map("videos")
+}
+
+// ─── ANALYTICS ───────────────────────────────────────────
+
+model VideoAnalytics {
+  id        String   @id @default(uuid()) @db.Uuid
+  videoId   String   @db.Uuid
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  snapshotDate DateTime
+
+  // Core Metrics
+  views         Int      @default(0)
+  estimatedMinutesWatched BigInt @default(0)
+  averageViewDuration  Int  @default(0) // seconds
+  averageViewPercentage Float? // 0-100
+
+  // Engagement
+  likes         Int      @default(0)
+  dislikes      Int      @default(0)
+  comments      Int      @default(0)
+  shares        Int      @default(0)
+  subscribersGained Int  @default(0)
+  subscribersLost   Int  @default(0)
+
+  // Revenue (estimated)
+  estimatedRPM   Float?
+  estimatedCPM   Float?
+  estimatedRevenue Float?
+
+  // Traffic Sources
+  trafficSourceExternal Int @default(0)
+  trafficSourceYouTubeSearch Int @default(0)
+  trafficSourceSuggestedVideos Int @default(0)
+  trafficSourceBrowseFeatures Int @default(0)
+  trafficSourceNotifications Int @default(0)
+  trafficSourcePlaylists Int @default(0)
+  trafficSourceChannelPages Int @default(0)
+
+  // Retention (stored as compressed JSON)
+  retentionCurve Json?     // Array of { second: number, retention: number }
+  introRetention Float?     // % retention at 0:30
+  midrollRetention Float?   // % retention at midpoint
+  outroRetention Float?     // % retention at last 30s
+
+  createdAt DateTime @default(now())
+
+  @@unique([videoId, snapshotDate])
+  @@index([videoId, snapshotDate])
+  @@map("video_analytics")
+}
+
+model ChannelAnalyticsSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  channelId String   @db.Uuid
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  snapshotDate DateTime
+
+  subscriberCount      Int    @default(0)
+  viewCount            BigInt @default(0)
+  videoCount           Int    @default(0)
+  estimatedRevenue     Float?
+
+  // 28-day metrics
+  views28d             Int    @default(0)
+  watchTime28d         BigInt @default(0)
+  subscribersGained28d Int    @default(0)
+  subscribersLost28d   Int    @default(0)
+  estimatedRPM28d      Float?
+  estimatedCPM28d      Float?
+
+  // Growth rates
+  subscriberGrowthRate Float?   // WoW %
+  viewGrowthRate       Float?
+  videoUploadFrequency Float?   // avg days between uploads
+
+  createdAt DateTime @default(now())
+
+  @@unique([channelId, snapshotDate])
+  @@index([channelId, snapshotDate])
+  @@map("channel_analytics_snapshots")
+}
+
+// ─── KEYWORDS & SEO ──────────────────────────────────────
+
+model Keyword {
+  id            String   @id @default(uuid()) @db.Uuid
+  channelId     String   @db.Uuid
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  term          String
+  language      String   @default("en")
+  category      String?  // niche / category classification
+
+  // Estimated metrics
+  searchVolume  Int?     // estimated monthly searches
+  competition   Float?   // 0-1 scale (YouTube ad competition)
+  difficulty    Int?     // 0-100 SEO difficulty score
+  cpc           Float?   // estimated cost per click
+
+  // CreatorOS computed
+  opportunityScore Float? // 0-100 computed score
+  clusterId     String?  // keyword cluster grouping
+  clusterName   String?  // e.g. "tech reviews", "cooking tutorials"
+  trend         String?  // rising | stable | declining
+
+  // YouTube Suggest
+  suggestVariations String[] @default([])
+
+  // Relations
+  videos        VideoKeyword[]
+  rankings      KeywordRanking[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([channelId, term])
+  @@index([channelId])
+  @@index([term])
+  @@map("keywords")
+}
+
+model VideoKeyword {
+  id        String   @id @default(uuid()) @db.Uuid
+  videoId   String   @db.Uuid
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  keywordId String   @db.Uuid
+  keyword   Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  position  Int?     // search ranking for this video on this keyword
+  createdAt DateTime @default(now())
+
+  @@unique([videoId, keywordId])
+  @@map("video_keywords")
+}
+
+model KeywordRanking {
+  id        String   @id @default(uuid()) @db.Uuid
+  keywordId String   @db.Uuid
+  keyword   Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  snapshotDate DateTime
+  position    Int?
+  searchVolume Int?
+
+  @@unique([keywordId, snapshotDate])
+  @@map("keyword_rankings")
+}
+
+model KeywordCluster {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  channelId String   @db.Uuid
+  keywords  String[] @default([]) // keyword IDs
+  avgDifficulty Float?
+  avgVolume     Int?
+  totalOpportunity Float?
+  createdAt DateTime @default(now())
+
+  @@index([channelId])
+  @@map("keyword_clusters")
+}
+
+// ─── COMPETITOR ANALYSIS ─────────────────────────────────
+
+model CompetitorAnalysis {
+  id              String   @id @default(uuid()) @db.Uuid
+  channelId       String   @db.Uuid
+  channel         Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  competitorYoutubeId String
+  competitorTitle     String
+  competitorThumbnail String?
+
+  // Metrics
+  subscriberCount    Int?
+  videoCount         Int?
+  viewCount          BigInt?
+  avgViewsPerVideo   Float?
+  uploadFrequency    Float?
+  subscriberGrowthRate Float?
+
+  // Topic overlap
+  topicOverlap       Float?   // 0-1
+  commonKeywords     String[] @default([])
+
+  // Velocity
+  growthVelocity     Float?   // subscribers/day
+  contentVelocity    Float?   // videos/week
+
+  lastAnalyzedAt     DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([channelId, competitorYoutubeId])
+  @@index([channelId])
+  @@map("competitor_analyses")
+}
+
+// ─── AI TASKS ────────────────────────────────────────────
+
+model AITask {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type        AITaskType
+  status      AITaskStatus  @default(QUEUED)
+  provider    AIProvider    @default(OPENAI)
+  model       String?       // specific model used
+
+  // Payload
+  input       Json          // task-specific input params
+  output      Json?         // task-specific result
+  error       String?
+  metadata    Json?         // token usage, latency, cost
+
+  // Retry
+  retryCount  Int           @default(0)
+  maxRetries  Int           @default(3)
+
+  priority    Int           @default(0)
+  queueName   String        @default("default")
+
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([userId, status])
+  @@index([type, status])
+  @@index([createdAt])
+  @@map("ai_tasks")
+}
+
+// ─── CONTENT CALENDAR ────────────────────────────────────
+
+model ContentCalendarItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoId     String?  @db.Uuid // linked after publish
+
+  title       String
+  description String?
+  status      String   @default("idea") // idea | scripted | recording | editing | review | scheduled | published
+  stage       String   @default("backlog") // backlog | this-week | next-week | published
+
+  scheduledDate DateTime?
+  dueDate       DateTime?
+  completedAt   DateTime?
+
+  labels      String[] @default([]) // custom tags/labels
+  priority    String   @default("medium") // low | medium | high | urgent
+  color       String?  // hex color for Kanban card
+
+  position    Int      @default(0) // sort order within stage
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, stage])
+  @@index([scheduledDate])
+  @@map("content_calendar_items")
+}
+
+// ─── REPORTS ─────────────────────────────────────────────
+
+model Report {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  type        String   // weekly | monthly | custom | automated
+  config      Json?    // report configuration (metrics, format)
+  data        Json?    // cached report data
+  status      String   @default("pending") // pending | generating | completed | failed
+  format      String   @default("pdf") // pdf | csv | json | html
+
+  schedule    String?  // cron expression for automated reports
+  lastGeneratedAt DateTime?
+  nextScheduledAt  DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@map("reports")
+}
+
+// ─── NOTIFICATIONS & WEBHOOKS ────────────────────────────
+
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  body      String?
+  type      String              // analytics_alert | milestone | ai_complete | error | system
+  channel   NotificationChannel @default(IN_APP)
+  data      Json?               // extra payload
+  read      Boolean             @default(false)
+
+  createdAt DateTime            @default(now())
+
+  @@index([userId, read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model Webhook {
+  id          String              @id @default(uuid()) @db.Uuid
+  userId      String              @db.Uuid
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  url         String
+  secret      String?             // for HMAC signing
+  events      String[]            // ["video.published", "milestone.reached", etc.]
+  channel     NotificationChannel // DISCORD | SLACK | WEBHOOK
+  name        String?
+  active      Boolean             @default(true)
+  lastTriggeredAt DateTime?
+  failureCount Int               @default(0)
+
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([userId])
+  @@map("webhooks")
+}
+
+// ─── PLAYLISTS & COMMENTS ────────────────────────────────
+
+model Playlist {
+  id            String   @id @default(uuid()) @db.Uuid
+  channelId     String   @db.Uuid
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  youtubeId     String   @unique
+  title         String
+  description   String?
+  itemCount     Int      @default(0)
+  privacyStatus String   @default("public")
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([channelId])
+  @@map("playlists")
+}
+
+model Comment {
+  id            String   @id @default(uuid()) @db.Uuid
+  channelId     String   @db.Uuid
+  channel       Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  videoId       String?  @db.Uuid
+  video         Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  youtubeId     String   @unique
+  authorName    String
+  authorChannelId String?
+  textDisplay   String
+  textOriginal  String?
+  likeCount     Int      @default(0)
+  publishedAt   DateTime
+  updatedAt     DateTime
+  parentId      String?  // for replies
+
+  // AI Analysis
+  sentiment     Float?   // -1 to 1
+  toxicity      Float?   // 0-1
+  isSpam        Boolean  @default(false)
+  category      String?  // question | praise | criticism | spam | suggestion
+  aiReply       String?  // suggested reply
+
+  createdAt     DateTime @default(now())
+
+  @@index([videoId])
+  @@index([channelId])
+  @@index([publishedAt])
+  @@map("comments")
+}
+
+// ─── PLUGIN SYSTEM ───────────────────────────────────────
+
+model PluginRegistration {
+  id            String       @id @default(uuid()) @db.Uuid
+  userId        String       @db.Uuid
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Plugin identity
+  packageName   String       // npm package name or local path
+  version       String
+  source        String       // "npm" | "local" | "url"
+
+  // Permissions requested
+  permissions   String[]     // ["analytics:read", "videos:write", etc.]
+
+  // State
+  status        PluginStatus @default(ACTIVE)
+  config        Json?        // user's settings for this plugin
+  settingsSchema Json?       // JSON Schema for config UI
+
+  installedAt   DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([userId, packageName])
+  @@map("plugin_registrations")
+}
+
+model PluginConfig {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @db.Uuid
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  pluginId  String
+  key       String
+  value     Json
+
+  @@unique([userId, pluginId, key])
+  @@map("plugin_configs")
+}
+
+// ─── TRENDS & MARKET DATA ────────────────────────────────
+
+model TrendData {
+  id          String   @id @default(uuid()) @db.Uuid
+  keyword     String
+  date        DateTime
+  region      String   @default("US")
+  category    String?  // YouTube search category
+
+  interest    Int      // 0-100 Google Trends interest
+  relatedQueries Json? // related rising/top queries
+
+  createdAt   DateTime @default(now())
+
+  @@unique([keyword, date, region])
+  @@index([keyword])
+  @@index([date])
+  @@map("trend_data")
+}
+
+model TrendAlert {
+  id          String   @id @default(uuid()) @db.Uuid
+  channelId   String   @db.Uuid
+  keyword     String
+  threshold   Int      @default(50) // interest threshold
+  active      Boolean  @default(true)
+  lastTriggeredAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([channelId])
+  @@map("trend_alerts")
+}
+
+// ─── SYSTEM / MISC ──────────────────────────────────────
+
+model SyncLog {
+  id          String     @id @default(uuid()) @db.Uuid
+  channelId   String     @db.Uuid
+  syncType    String     // channel | videos | analytics | comments
+  status      SyncStatus @default(PENDING)
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+  itemsProcessed Int    @default(0)
+  metadata    Json?
+
+  createdAt   DateTime   @default(now())
+
+  @@index([channelId, syncType])
+  @@index([createdAt])
+  @@map("sync_logs")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String?  @db.Uuid
+  channelId   String?  @db.Uuid
+  action      String   // "video.updated" | "channel.disconnected" | "ai.task.created"
+  entity      String   // "video" | "channel" | "user" | "keyword"
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

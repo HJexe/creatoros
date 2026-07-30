@@ -1,0 +1,39 @@
+{
+  "name": "@creatoros/video-evaluator",
+  "version": "0.1.0",
+  "description": "CLI tool to evaluate any YouTube video or channel via URL — SEO score, thumbnail analysis, keyword intelligence, and AI suggestions.",
+  "type": "module",
+  "bin": {
+    "cos-eval": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "eval": "tsx src/index.ts",
+    "demo": "tsx src/scripts/demo.ts",
+    "batch": "tsx src/scripts/batch-evaluate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@creatoros/shared": "workspace:*",
+    "zod": "^3.23.0",
+    "sharp": "^0.33.0",
+    "natural": "^6.10.0",
+    "clui": "^0.3.6",
+    "cli-color": "^2.0.4",
+    "cli-table3": "^0.6.4",
+    "commander": "^12.1.0",
+    "conf": "^12.0.0",
+    "dotenv": "^16.4.0",
+    "node-fetch": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/natural": "^5.1.0",
+    "@types/cli-color": "^2.0.0",
+    "@types/cli-table3": "^0.6.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.0.0"
+  }
+}

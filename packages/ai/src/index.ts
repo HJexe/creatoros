@@ -1,0 +1,6 @@
+export { AIRouter } from './router.js'
+export type { AIProvider, AIProviderConfig, AICompletionParams, AICompletionResult, AIEmbeddingParams, AIEmbeddingResult } from './providers/base.js'
+export { OpenAIProvider } from './providers/openai.js'
+export { AnthropicProvider } from './providers/anthropic.js'
+export { GoogleProvider } from './providers/google.js'
+export { OllamaProvider } from './providers/ollama.js'

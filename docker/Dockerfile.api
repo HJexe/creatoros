@@ -1,0 +1,36 @@
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+FROM base AS deps
+WORKDIR /app
+COPY pnpm-lock.yaml ./
+COPY package.json turbo.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/database/package.json packages/database/
+COPY packages/shared/package.json packages/shared/
+COPY packages/config/package.json packages/config/
+COPY packages/ai/package.json packages/ai/
+RUN pnpm install --frozen-lockfile
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm --filter @creatoros/database db:generate
+RUN pnpm --filter @creatoros/api build
+RUN pnpm --filter @creatoros/database build
+RUN pnpm --filter @creatoros/shared build
+
+FROM base AS runner
+WORKDIR /app
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 fastify
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/package.json ./apps/api/
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+USER fastify
+EXPOSE 3001
+ENV NODE_ENV=production
+CMD ["node", "apps/api/dist/index.js"]
