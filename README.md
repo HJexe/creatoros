@@ -26,6 +26,20 @@ CreatorOS provides creators with AI-powered SEO, analytics, and workflow tools �
 - **Browser Extension** — Chrome MV3 extension that injects SEO scores and analytics overlays directly into YouTube Studio.
 - **Plugin SDK** — Extend CreatorOS with custom plugins. See [DEVELOPER_ECOSYSTEM.md](docs/DEVELOPER_ECOSYSTEM.md).
 
+## Try It Now — No Install Required (Almost)
+
+```bash
+# 1. Prerequisites: Node.js 20+, pnpm 9, a free YouTube Data API key
+# 2. Clone and go:
+git clone https://github.com/creatoros/creatoros.git
+cd creatoros/apps/video-evaluator
+cp .env.example .env   # ← add your YOUTUBE_API_KEY here
+pnpm install
+pnpm eval "https://youtu.be/dQw4w9WgXcQ"
+```
+
+You'll get a full SEO, thumbnail, and keyword analysis report in under 2 seconds. No database, no Docker, no account needed.
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -154,6 +168,46 @@ GOOGLE_AI_API_KEY=
 # Optional: Local AI
 OLLAMA_BASE_URL=http://localhost:11434
 ```
+
+## Testing
+
+CreatorOS includes a standalone **Video Evaluator** CLI that runs the full analysis pipeline against any YouTube URL. No database or infrastructure required — just a YouTube Data API key.
+
+```bash
+cd apps/video-evaluator
+cp .env.example .env
+# Set YOUTUBE_API_KEY in .env
+
+# Analyze a video by URL
+pnpm eval "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Or by 11-character video ID
+pnpm eval "dQw4w9WgXcQ"
+
+# Or by channel handle
+pnpm eval "@mkbhd"
+
+# Get a beautiful HTML report
+pnpm eval "dQw4w9WgXcQ" --format html --output report.html
+
+# Get structured JSON output
+pnpm eval "dQw4w9WgXcQ" --format json --output report.json
+
+# Use AI for smarter suggestions (requires API key)
+pnpm eval "dQw4w9WgXcQ" --ai-provider openai
+
+# Batch-evaluate multiple URLs
+pnpm batch urls.json results.json
+```
+
+| Score | Meaning |
+|-------|---------|
+| **SEO Score** | Title/description/tag optimization |
+| **Thumbnail Score** | Visual quality, face/text, contrast |
+| **Keyword Opportunity** | Search potential vs. competition |
+| **Overall Score** | Weighted composite of all three |
+
+Full testing guide: [docs/TESTING.md](docs/TESTING.md)
 
 ## License
 
